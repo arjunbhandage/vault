@@ -720,7 +720,7 @@ func TestSSHBackend_CA(t *testing.T) {
 			testCAPublicKey,
 			testCAPrivateKey,
 			"",
-			true,
+			false,
 		},
 		{
 			"RSAKey_RSA1AlgoSigner_ImageSupportsRSA1",
@@ -729,6 +729,14 @@ func TestSSHBackend_CA(t *testing.T) {
 			testCAPrivateKey,
 			ssh.SigAlgoRSA,
 			false,
+		},
+		{
+			"RSAKey_RSA1AlgoSigner_ImageSupportsNoRSA1",
+			dockerImageTagSupportsNoRSA1,
+			testCAPublicKey,
+			testCAPrivateKey,
+			ssh.SigAlgoRSA,
+			true,
 		},
 		{
 			"RSAKey_RSASHA2256AlgoSigner_ImageSupportsRSA1",

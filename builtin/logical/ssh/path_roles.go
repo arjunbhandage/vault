@@ -22,7 +22,10 @@ const (
 	// KeyTypeCA is an key of type CA
 	KeyTypeCA = "ca"
 
-	roleEntryVersion = 1
+	// DefaultAlgorithmSigner is the default RSA signing algorithm
+	DefaultAlgorithmSigner = "default"
+
+	roleEntryVersion = 2
 )
 
 // Structure that represents a role in SSH backend. This is a common role structure
@@ -351,7 +354,7 @@ func pathRoles(b *backend) *framework.Path {
 				Type: framework.TypeString,
 				Description: `
 				When supplied, this value specifies a signing algorithm for the key. Possible values:
-				ssh-rsa, rsa-sha2-256, rsa-sha2-512.
+				ssh-rsa, rsa-sha2-256, rsa-sha2-512, default, or the empty string.
 				`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					Name: "Signing Algorithm",
@@ -493,7 +496,7 @@ func (b *backend) pathRoleWrite(ctx context.Context, req *logical.Request, d *fr
 			Version:         roleEntryVersion,
 		}
 	} else if keyType == KeyTypeCA {
-		algorithmSigner := ""
+		algorithmSigner := DefaultAlgorithmSigner
 		algorithmSignerRaw, ok := d.GetOk("algorithm_signer")
 		if ok {
 			algorithmSigner = algorithmSignerRaw.(string)
@@ -606,6 +609,42 @@ func (b *backend) getRole(ctx context.Context, s logical.Storage, n string) (*ss
 		result.Version += 1
 		modified = true
 	}
+
+	// In order to perform the version 2 upgrade, we need knowledge of the
+	// signing key type as we want to make ssh-rsa an explicitly notated
+	// algorithm choice.
+	if result.Version <= 1 {
+		var publicKey ssh.PublicKey
+		publicKeyEntry, err := caKey(ctx, s, caPublicKey)
+		if err != nil {
+			b.Logger().Debug(fmt.Sprintf("failed to load public key entry while attempting to migrate: %v", err))
+			goto SKIPVERSION2
+		}
+		if publicKeyEntry == nil || publicKeyEntry.Key == "" {
+			b.Logger().Debug(fmt.Sprintf("got empty public key entry while attempting to migrate"))
+			goto SKIPVERSION2
+		}
+
+		publicKey, err = parsePublicSSHKey(publicKeyEntry.Key)
+		if err == nil {
+			// Move an empty signing algorithm to an explicit ssh-rsa (SHA-1)
+			// if this key is of type RSA. This isn't a secure default but
+			// exists for backwards compatibility with existing versions of
+			// Vault. By making it explicit, operators can see that this is
+			// the value and move it to a newer algorithm in the future.
+			if publicKey.Type() == ssh.KeyAlgoRSA && result.AlgorithmSigner == "" {
+				result.AlgorithmSigner = ssh.SigAlgoRSA
+			}
+
+			result.Version += 1
+			modified = true
+		}
+	}
+
+	// Operation to signal end of version 2 upgrade. Put new version upgrades
+	// after this line. Earlier errs should be returned instead.
+SKIPVERSION2:
+	err = nil
 
 	// Condition copied from PKI builtin.
 	if modified && (b.System().LocalMount() || !b.System().ReplicationState().HasState(consts.ReplicationPerformanceSecondary)) {
